@@ -32,7 +32,7 @@ CONFIG = {
         "TRAXIONA.MX", "ARA.MX", "FINN13.MX", "AUTLANB.MX", "HCITY.MX"
     ], 
     "dend": date.today().strftime('%Y-%m-%d'),  
-    "modo_pruebas": True, # Cambiar a False cuando desees operar en vivo con mercado real
+    "modo_pruebas": False, # Cambiar a False cuando desees operar en vivo con mercado real
     "ema_f": 20,
     "ema_s": 50,
     "rsi_pr": 14,
