@@ -26,7 +26,7 @@ CONFIG = {
         "FIHO12.MX", "ARA.MX"
     ], 
     "dend": date.today().strftime('%Y-%m-%d'),  
-    "modo_pruebas": False, # Cambiar a False cuando desees operar en vivo con mercado real
+    "modo_pruebas": True, # Cambiar a False cuando desees operar en vivo con mercado real
     "ema_f": 20,
     "ema_s": 50,
     "rsi_pr": 14,
@@ -47,7 +47,7 @@ def generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_entrada=None, 
     df_plot = df.iloc[max(0, last_index-40):last_index+2].copy()
     
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7), gridspec_kw={'height_ratios': [3, 1]})
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7.5), gridspec_kw={'height_ratios': [3, 1]})
     
     # Panel Superior: Velas Japonesas, EMAs y Bandas de Bollinger
     inc = df_plot['askclose'] >= df_plot['askopen']
@@ -74,12 +74,13 @@ def generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_entrada=None, 
         ax1.axhline(precio_entrada, color='#4B0082', linestyle='-', linewidth=1.2, label=f'Entrada ({precio_entrada:.2f})', zorder=6)
         ax1.axhline(sl, color='#d62728', linestyle='-', linewidth=1.5, label=f'Stop Loss ({sl:.2f})', zorder=6)
         ax1.axhline(tp, color='#2ca02c', linestyle='-', linewidth=1.5, label=f'Take Profit ({tp:.2f})', zorder=6)
-        ax1.axhspan(precio_entrada, tp, color='#2ca02c', alpha=0.07, zorder=0)
-        ax1.axhspan(sl, precio_entrada, color='#d62728', alpha=0.07, zorder=0)
+        ax1.axhspan(precio_entrada, tp, color='#2ca02c', alpha=0.07, zorder=0, label='Zona Objetivo')
+        ax1.axhspan(sl, precio_entrada, color='#d62728', alpha=0.07, zorder=0, label='Zona Riesgo')
 
-    ax1.set_title(f"Auditoría Visual - {ticker}", fontsize=14, fontweight='bold')
+    # FIX CRÍTICO DE DISEÑO: Título con margen superior ('pad') y Leyenda externa flotante arriba en 3 columnas
+    ax1.set_title(f"Auditoría Visual - {ticker}", fontsize=14, fontweight='bold', pad=45)
     ax1.set_ylabel('Precio')
-    ax1.legend(loc='upper left', frameon=True, facecolor='white', framealpha=0.95)
+    ax1.legend(loc='lower left', bbox_to_anchor=(0.0, 1.02), ncol=3, frameon=True, facecolor='white', framealpha=0.95, fontsize=8.5)
     
     # Panel Inferior: RSI
     ax2.plot(df_plot['Date'], df_plot['rsi'], color='#9467bd', linewidth=1.8, label='RSI (14)')
@@ -111,13 +112,13 @@ def despachar_telegram_con_foto(token, chat_id, mensaje, ruta_foto):
 
 def ejecutar_escanner(cfg):
     # ==========================================================================
-    # MODIFICACIÓN: SIMULACIÓN FIEL CON VELAS Y BOLLINGER MOCK
+    # SIMULACIÓN FIEL CON VELAS Y BOLLINGER MOCK
     # ==========================================================================
     if cfg['modo_pruebas']:
         print(f"🧪 [MODO PRUEBA MULTI-ACTIVO] Generando simulaciones fieles con velas para: {cfg['assets']}\n")
         
         for idx, ticker in enumerate(cfg['assets']):
-            precio_base = 45.0 + (idx * 15.0)  # Escala contenida para evitar distorsiones
+            precio_base = 45.0 + (idx * 15.0)  
             fechas_mock = [datetime.now() - timedelta(days=x) for x in range(50, -1, -1)]
             
             close_mock = np.linspace(precio_base, precio_base * 1.15, 51) + np.random.normal(0, 1, 51)
@@ -157,7 +158,7 @@ def ejecutar_escanner(cfg):
                         f"💰 Precio Entrada: {precio_simulado}\n"
                         f"🛑 Stop Loss (1.5x ATR): {sl_simulado}\n"
                         f"🎯 Take Profit (2.5x ATR): {tp_simulado}\n\n"
-                        f"_*Gráfico actualizado a formato Velas Japonesas y Bandas de Bollinger de fondo._")
+                        f"_*Gráfico actualizado con Leyendas Externas Superiores para evitar solapamiento._")
             
             despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], msg_test, ruta)
             time.sleep(0.5)
