@@ -77,10 +77,9 @@ def generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_entrada=None, 
         ax1.axhspan(precio_entrada, tp, color='#2ca02c', alpha=0.07, zorder=0, label='Zona Objetivo')
         ax1.axhspan(sl, precio_entrada, color='#d62728', alpha=0.07, zorder=0, label='Zona Riesgo')
 
-    # FIX CRÍTICO DE DISEÑO: Título con margen superior ('pad') y Leyenda externa flotante arriba en 3 columnas
-    ax1.set_title(f"Auditoría Visual - {ticker}", fontsize=14, fontweight='bold', pad=45)
+    # FIX: Título limpio mostrando solo el Ticker
+    ax1.set_title(f"{ticker}", fontsize=14, fontweight='bold')
     ax1.set_ylabel('Precio')
-    ax1.legend(loc='lower left', bbox_to_anchor=(0.0, 1.02), ncol=3, frameon=True, facecolor='white', framealpha=0.95, fontsize=8.5)
     
     # Panel Inferior: RSI
     ax2.plot(df_plot['Date'], df_plot['rsi'], color='#9467bd', linewidth=1.8, label='RSI (14)')
@@ -89,11 +88,16 @@ def generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_entrada=None, 
     ax2.set_ylim(15, 85)
     ax2.set_ylabel('RSI')
     
+    # FIX: Leyenda unificada posicionada abajo del todo (debajo de ax2) para limpieza absoluta
+    handles, labels = ax1.get_legend_handles_labels()
+    ax2.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.35), ncol=3, frameon=True, facecolor='white', framealpha=0.95, fontsize=8.5)
+    
     plt.xticks(rotation=25)
     plt.tight_layout()
     
     ruta_imagen = f'alerta_{ticker}.png'
-    plt.savefig(ruta_imagen, dpi=150)
+    # bbox_inches='tight' previene que la leyenda inferior se corte al guardar el archivo
+    plt.savefig(ruta_imagen, dpi=150, bbox_inches='tight')
     plt.close()
     return ruta_imagen
 
@@ -158,7 +162,7 @@ def ejecutar_escanner(cfg):
                         f"💰 Precio Entrada: {precio_simulado}\n"
                         f"🛑 Stop Loss (1.5x ATR): {sl_simulado}\n"
                         f"🎯 Take Profit (2.5x ATR): {tp_simulado}\n\n"
-                        f"_*Gráfico actualizado con Leyendas Externas Superiores para evitar solapamiento._")
+                        f"_*Gráfico limpio: Leyendas reubicadas en la base del reporte._")
             
             despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], msg_test, ruta)
             time.sleep(0.5)
