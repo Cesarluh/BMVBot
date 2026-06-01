@@ -5,7 +5,7 @@ import pandas as pd
 import yfinance as yf         
 from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
-from ta.volatility import AverageTrueRange
+from ta.volatility import AverageTrueRange, BollingerBands  # Añadido BollingerBands
 import requests
 import matplotlib.pyplot as plt
 import time
@@ -18,21 +18,21 @@ plt.switch_backend('Agg')
 # ==============================================================================
 CONFIG = {
     "assets": [
-    "GMEXICOB.MX", "AMXB.MX", "WALMEX.MX", "GFNORTEO.MX", "FEMSAUBD.MX", 
-    "AC.MX", "CEMEXCPO.MX", "GFINBURO.MX", "BIMBOA.MX", "GAPB.MX", 
-    "ASURB.MX", "FIBRAPL14.MX", "VISTAA.MX", "FUNO11.MX", "PINFRA.MX", 
-    "GRUMAB.MX", "CHDRAUIB.MX", "KOFUBL.MX", "SIGMAFA.MX", "OMAB.MX", 
-    "GENTERA.MX", "CMOCTEZ.MX", "GCC.MX", "ICHB.MX", "Q.MX", 
-    "BBAJIOO.MX", "KIMBERA.MX", "VESTA.MX", "CUERVO.MX", "SITES1A-1.MX", 
-    "FRAGUAB.MX", "RA.MX", "FMTY14.MX", "DANHOS13.MX", "ORBIA.MX", 
-    "ALSEA.MX", "NEXT25.MX", "AERO.MX", "MEGACPO.MX", "LASITE.MX", 
-    "TLEVISACPO.MX", "ALPEKA.MX", "FCFE18.MX", "LACOMERUBC.MX", "FNOVA17.MX", 
-    "LABB.MX", "VOLARA.MX", "ACTINVRB.MX", "NEMAKA.MX", "AGUILASCPO.MX", 
-    "VINTE.MX", "FMX23.MX", "AXTELCPO.MX", "AGUA.MX", "FIHO12.MX", 
-    "TRAXIONA.MX", "ARA.MX", "FINN13.MX", "AUTLANB.MX", "HCITY.MX"
-], 
+        "GMEXICOB.MX", "AMXB.MX", "WALMEX.MX", "GFNORTEO.MX", "FEMSAUBD.MX", 
+        "AC.MX", "CEMEXCPO.MX", "GFINBURO.MX", "BIMBOA.MX", "GAPB.MX", 
+        "ASURB.MX", "FIBRAPL14.MX", "VISTAA.MX", "FUNO11.MX", "PINFRA.MX", 
+        "GRUMAB.MX", "CHDRAUIB.MX", "KOFUBL.MX", "SIGMAFA.MX", "OMAB.MX", 
+        "GENTERA.MX", "CMOCTEZ.MX", "GCC.MX", "ICHB.MX", "Q.MX", 
+        "BBAJIOO.MX", "KIMBERA.MX", "VESTA.MX", "CUERVO.MX", "SITES1A-1.MX", 
+        "FRAGUAB.MX", "RA.MX", "FMTY14.MX", "DANHOS13.MX", "ORBIA.MX", 
+        "ALSEA.MX", "NEXT25.MX", "AERO.MX", "MEGACPO.MX", "LASITE.MX", 
+        "TLEVISACPO.MX", "ALPEKA.MX", "FCFE18.MX", "LACOMERUBC.MX", "FNOVA17.MX", 
+        "LABB.MX", "VOLARA.MX", "ACTINVRB.MX", "NEMAKA.MX", "AGUILASCPO.MX", 
+        "VINTE.MX", "FMX23.MX", "AXTELCPO.MX", "AGUA.MX", "FIHO12.MX", 
+        "TRAXIONA.MX", "ARA.MX", "FINN13.MX", "AUTLANB.MX", "HCITY.MX"
+    ], 
     "dend": date.today().strftime('%Y-%m-%d'),  
-    "modo_pruebas": False, # Cambiar a False cuando desees operar en vivo con mercado real
+    "modo_pruebas": True, # Cambiar a False cuando desees operar en vivo con mercado real
     "ema_f": 20,
     "ema_s": 50,
     "rsi_pr": 14,
@@ -55,23 +55,44 @@ def generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_entrada=None, 
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7), gridspec_kw={'height_ratios': [3, 1]})
     
-    # Panel Superior: Gráfico de Precios Claro
-    ax1.plot(df_plot['Date'], df_plot['askclose'], label='Precio Cierre', color='#1f77b4', linewidth=2.5, zorder=3)
-    ax1.plot(df_plot['Date'], df_plot['ema20'], label=f'EMA {cfg["ema_f"]}', color='#ff7f0e', linestyle='--')
-    ax1.plot(df_plot['Date'], df_plot['ema50'], label=f'EMA {cfg["ema_s"]}', color='#2ca02c', linestyle='--')
+    # --------------------------------------------------------------------------
+    # Panel Superior: Velas Japonesas, EMAs y Bandas de Bollinger
+    # --------------------------------------------------------------------------
+    # 1. Separar velas alcistas y bajistas
+    inc = df_plot['askclose'] >= df_plot['askopen']
+    dec = df_plot['askopen'] > df_plot['askclose']
+    c_up, c_down = '#2ca02c', '#d62728' # Colores estándar claros
     
-    if precio_entrada is not None and sl is not None and tp is not None:
-        ax1.axhline(precio_entrada, color='#7f7f7f', linestyle='-', linewidth=1.5, label=f'Entrada ({precio_entrada:.2f})')
-        ax1.axhline(sl, color='#d62728', linestyle=':', linewidth=2, label=f'Stop Loss ({sl:.2f})')
-        ax1.axhline(tp, color='#2ca02c', linestyle=':', linewidth=2, label=f'Take Profit ({tp:.2f})')
-        ax1.axhspan(precio_entrada, tp, color='#2ca02c', alpha=0.08, label='Zona Objetivo')
-        ax1.axhspan(sl, precio_entrada, color='#d62728', alpha=0.08, label='Zona Riesgo')
+    # 2. Dibujar Velas (Mechas y Cuerpos nativos con Matplotlib)
+    ax1.vlines(df_plot['Date'][inc], df_plot['asklow'][inc], df_plot['askhigh'][inc], color=c_up, linewidth=1.2, zorder=3)
+    ax1.vlines(df_plot['Date'][dec], df_plot['asklow'][dec], df_plot['askhigh'][dec], color=c_down, linewidth=1.2, zorder=3)
+    ax1.bar(df_plot['Date'][inc], df_plot['askclose'][inc] - df_plot['askopen'][inc], bottom=df_plot['askopen'][inc], color=c_up, width=0.5, zorder=4)
+    ax1.bar(df_plot['Date'][dec], df_plot['askopen'][dec] - df_plot['askclose'][dec], bottom=df_plot['askclose'][dec], color=c_down, width=0.5, zorder=4)
+    
+    # 3. Dibujar Indicadores de Tendencia (EMAs)
+    ax1.plot(df_plot['Date'], df_plot['ema20'], label=f'EMA {cfg["ema_f"]}', color='#ff7f0e', linestyle='--', linewidth=1.5, zorder=5)
+    ax1.plot(df_plot['Date'], df_plot['ema50'], label=f'EMA {cfg["ema_s"]}', color='#1f77b4', linestyle='--', linewidth=1.5, zorder=5)
+    
+    # 4. Dibujar Bandas de Bollinger (Apoyo Visual Sutil)
+    ax1.plot(df_plot['Date'], df_plot['bb_hband'], color='#7f7f7f', linestyle=':', alpha=0.4, label='Bollinger (20, 2)', zorder=2)
+    ax1.plot(df_plot['Date'], df_plot['bb_lband'], color='#7f7f7f', linestyle=':', alpha=0.4, zorder=2)
+    ax1.fill_between(df_plot['Date'], df_plot['bb_lband'], df_plot['bb_hband'], color='#7f7f7f', alpha=0.03, zorder=1)
 
-    ax1.set_title(f"Auditoría Visual Estándar - {ticker}", fontsize=14, fontweight='bold')
+    # 5. Capas de Gestión de Riesgo (ATR) si hay operación activa
+    if precio_entrada is not None and sl is not None and tp is not None:
+        ax1.axhline(precio_entrada, color='#4B0082', linestyle='-', linewidth=1.2, label=f'Entrada ({precio_entrada:.2f})', zorder=6)
+        ax1.axhline(sl, color='#d62728', linestyle='-', linewidth=1.5, label=f'Stop Loss ({sl:.2f})', zorder=6)
+        ax1.axhline(tp, color='#2ca02c', linestyle='-', linewidth=1.5, label=f'Take Profit ({tp:.2f})', zorder=6)
+        ax1.axhspan(precio_entrada, tp, color='#2ca02c', alpha=0.07, zorder=0)
+        ax1.axhspan(sl, precio_entrada, color='#d62728', alpha=0.07, zorder=0)
+
+    ax1.set_title(f"Auditoría Visual - {ticker}", fontsize=14, fontweight='bold')
     ax1.set_ylabel('Precio')
     ax1.legend(loc='upper left', frameon=True, facecolor='white', framealpha=0.95)
     
-    # Panel Inferior: Momentum RSI Claro
+    # --------------------------------------------------------------------------
+    # Panel Inferior: Momentum RSI
+    # --------------------------------------------------------------------------
     ax2.plot(df_plot['Date'], df_plot['rsi'], color='#9467bd', linewidth=1.8, label='RSI (14)')
     ax2.axhline(cfg['rsi_buy'], color='#d62728', linestyle=':', alpha=0.8)
     ax2.axhline(cfg['rsi_sell'], color='#1f77b4', linestyle=':', alpha=0.8)
@@ -101,47 +122,55 @@ def despachar_telegram_con_foto(token, chat_id, mensaje, ruta_foto):
 
 def ejecutar_escanner(cfg):
     # ==========================================================================
-    # MODIFICACIÓN: SIMULACIÓN FIEL IDÉNTICA A COLAB (MULTI-ACTIVO)
+    # MODIFICACIÓN: SIMULACIÓN FIEL CON VELAS, EMAS Y BOLLINGER MOCK
     # ==========================================================================
     if cfg['modo_pruebas']:
-        print(f"🧪 [MODO PRUEBA MULTI-ACTIVO] Generando simulaciones fieles para: {cfg['assets']}\n")
+        print(f"🧪 [MODO PRUEBA MULTI-ACTIVO] Generando simulaciones fieles con velas para: {cfg['assets']}\n")
         
         for idx, ticker in enumerate(cfg['assets']):
-            # Escalamos el precio base para simular diferentes zonas de valor por ticker
             precio_base = 50.0 + (idx * 40.0)
             fechas_mock = [datetime.now() - timedelta(days=x) for x in range(50, -1, -1)]
-            precios_mock = np.linspace(precio_base, precio_base * 1.15, 51) + np.random.normal(0, 1, 51)
             
-            df = pd.DataFrame({'Date': fechas_mock, 'askclose': precios_mock})
-            df['askhigh'] = df['askclose'] + 1.2
-            df['asklow'] = df['askclose'] - 1.2
+            # Creación de estructura OHLC realista
+            close_mock = np.linspace(precio_base, precio_base * 1.15, 51) + np.random.normal(0, 1, 51)
+            open_mock = np.roll(close_mock, 1)
+            open_mock[0] = precio_base
+            high_mock = np.maximum(close_mock, open_mock) + np.abs(np.random.normal(0, 1.2, 51))
+            low_mock = np.minimum(close_mock, open_mock) - np.abs(np.random.normal(0, 1.2, 51))
+            
+            df = pd.DataFrame({
+                'Date': fechas_mock, 
+                'askclose': close_mock,
+                'askopen': open_mock,
+                'askhigh': high_mock,
+                'asklow': low_mock
+            })
             df['Volume'] = np.random.randint(150000, 450000, 51)
             
-            # Estructura completa de indicadores requerida por el motor gráfico claro
+            # Datos técnicos simulados en armonía
             df['ema20'] = df['askclose'] - 1.5
             df['ema50'] = df['askclose'] - 4.5
             df['rsi'] = np.linspace(42, 57, 51) 
             df['atr'] = round(precio_base * 0.03, 2)
+            df['bb_hband'] = df['askclose'] + (precio_base * 0.06)
+            df['bb_lband'] = df['askclose'] - (precio_base * 0.06)
             
             last_index = df.index[-2]
             precio_simulado = round(df['askclose'].iloc[last_index], 2)
             atr_mock = df['atr'].iloc[last_index]
             
-            # Cálculo dinámico basado exactamente en los multiplicadores de la estrategia
             sl_simulado = round(precio_simulado - (cfg['sl_mult'] * atr_mock), 2)
             tp_simulado = round(precio_simulado + (cfg['tp_mult'] * atr_mock), 2)
             
-            # Generar el gráfico en la ruta limpia y clara
             ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_simulado, sl_simulado, tp_simulado)
             
-            # Formateo fiel del mensaje de alerta estructurada
-            msg_test = (f"🧪 **ALERTA SIMULADA (MODO DE PRUEBA - GITHUB ACTIONS)**\n\n"
+            msg_test = (f"🧪 **ALERTA SIMULADA (MODO DE PRUEBA - VELAS)**\n\n"
                         f"🟢 **ENTRADA LONG GATILLADA ({ticker})**\n"
                         f"📅 Fecha: {cfg['dend']} (Hoy)\n"
                         f"💰 Precio Entrada: {precio_simulado}\n"
                         f"🛑 Stop Loss (1.5x ATR): {sl_simulado}\n"
                         f"🎯 Take Profit (2.5x ATR): {tp_simulado}\n\n"
-                        f"_*Notificación de control enviada con plantilla real de mercado e histórico claro._")
+                        f"_*Gráfico actualizado a formato Velas Japonesas y Bandas de Bollinger de fondo._")
             
             despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], msg_test, ruta)
             time.sleep(0.5)
@@ -152,21 +181,30 @@ def ejecutar_escanner(cfg):
     # ==========================================================================
     for ticker in cfg['assets']:
         try:
-            dias_atras = int((cfg['ema_s'] + cfg['vol_pr'] + 10) * 7 / 5)
+            dias_atras = int((cfg['ema_s'] + cfg['vol_pr'] + 15) * 7 / 5)
             dini = (datetime.strptime(cfg['dend'], "%Y-%m-%d") - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
             df = yf.download(ticker, start=dini, end=cfg['dend'], auto_adjust=True, progress=False)
             
             if df.empty: continue
             if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+            
+            # Mapeo completo OHLC para construir las velas
             df.rename(columns={'Open':'askopen', 'High':'askhigh', 'Low':'asklow', 'Close':'askclose'}, inplace=True)
             df.reset_index(inplace=True)
 
+            # Cálculo de Indicadores Estratégicos
             df['ema20'] = EMAIndicator(df['askclose'].squeeze(), cfg['ema_f']).ema_indicator()
             df['ema50'] = EMAIndicator(df['askclose'].squeeze(), cfg['ema_s']).ema_indicator()
             df['rsi'] = RSIIndicator(df['askclose'].squeeze(), cfg['rsi_pr']).rsi()
             df['atr'] = AverageTrueRange(df['askhigh'].squeeze(), df['asklow'].squeeze(), df['askclose'].squeeze(), cfg['atr_pr']).average_true_range()
             df['vol_sma'] = df['Volume'].rolling(cfg['vol_pr']).mean()
 
+            # Cálculo de Bandas de Bollinger de Apoyo Visual
+            bb_indicator = BollingerBands(df['askclose'].squeeze(), window=20, window_dev=2)
+            df['bb_hband'] = bb_indicator.bollinger_hband()
+            df['bb_lband'] = bb_indicator.bollinger_lband()
+
+            # Evaluación de Condiciones
             df['cond_trend'] = (df['ema20'] > df['ema50']) & (df['askclose'] > df['ema20'])
             df['cond_rsi_buy'] = (df['rsi'] >= cfg['rsi_buy']) & (df['rsi'].shift(1) < cfg['rsi_buy'])
             df['cond_vol'] = df['Volume'] > df['vol_sma']
@@ -191,6 +229,7 @@ def ejecutar_escanner(cfg):
                 ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_cierre, sl, tp)
                 msg = f"🟢 **COMPRA ({ticker})**\n📅 {fecha_str}\n💰 Entrada: {precio_cierre}\n🛑 SL: {sl}\n🎯 TP: {tp}"
                 despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], msg, ruta)
+                
             elif posicion_activa and entry_idx is not None:
                 p_entry = df['askclose'].iloc[entry_idx]
                 atr_e = df['atr'].iloc[entry_idx]
