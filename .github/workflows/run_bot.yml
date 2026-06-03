@@ -2,7 +2,7 @@ name: Escáner Automático BMV
 
 on:
   schedule:
-    - cron: '20 20 * * *'
+    - cron: '20 20 * * 1-5'
   workflow_dispatch: 
 
 jobs:
