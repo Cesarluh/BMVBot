@@ -26,7 +26,7 @@ CONFIG = {
         "FIHO12.MX", "ARA.MX"
     ], 
     "dend": date.today().strftime('%Y-%m-%d'),  
-    "modo_pruebas": False, # Cambiar a False cuando desees operar en vivo con mercado real
+    "modo_pruebas": True, # Cambiar a False cuando desees operar en vivo con mercado real
     "ema_f": 20,
     "ema_s": 50,
     "rsi_pr": 14,
@@ -77,7 +77,6 @@ def generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_entrada=None, 
         ax1.axhspan(precio_entrada, tp, color='#2ca02c', alpha=0.07, zorder=0, label='Zona Objetivo')
         ax1.axhspan(sl, precio_entrada, color='#d62728', alpha=0.07, zorder=0, label='Zona Riesgo')
 
-    # FIX: Título limpio mostrando solo el Ticker
     ax1.set_title(f"{ticker}", fontsize=14, fontweight='bold')
     ax1.set_ylabel('Precio')
     
@@ -88,7 +87,7 @@ def generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_entrada=None, 
     ax2.set_ylim(15, 85)
     ax2.set_ylabel('RSI')
     
-    # FIX: Leyenda unificada posicionada abajo del todo (debajo de ax2) para limpieza absoluta
+    # Leyenda unificada posicionada abajo
     handles, labels = ax1.get_legend_handles_labels()
     ax2.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.35), ncol=3, frameon=True, facecolor='white', framealpha=0.95, fontsize=8.5)
     
@@ -96,7 +95,6 @@ def generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_entrada=None, 
     plt.tight_layout()
     
     ruta_imagen = f'alerta_{ticker}.png'
-    # bbox_inches='tight' previene que la leyenda inferior se corte al guardar el archivo
     plt.savefig(ruta_imagen, dpi=150, bbox_inches='tight')
     plt.close()
     return ruta_imagen
@@ -114,9 +112,25 @@ def despachar_telegram_con_foto(token, chat_id, mensaje, ruta_foto):
     except Exception as e:
         print(f"❌ Error enviando a Telegram: {e}")
 
+def despachar_telegram_texto(token, chat_id, mensaje):
+    if not token or not chat_id:
+        print(f"⚠️ Credenciales ausentes. Texto en consola:\n{mensaje}")
+        return
+    url = f'https://api.telegram.org/bot{token}/sendMessage'
+    try:
+        res = requests.post(url, json={'chat_id': chat_id, 'text': mensaje, 'parse_mode': 'Markdown'})
+        print(f"📋 Notificación de control de workflow enviada. Status: {res.status_code}")
+    except Exception as e:
+        print(f"❌ Error enviando resumen a Telegram: {e}")
+
 def ejecutar_escanner(cfg):
+    # Variables de control e indicadores globales del proceso
+    fecha_operacion = datetime.strptime(cfg['dend'], "%Y-%m-%d").strftime('%Y/%m/%d')
+    conteo_compra = 0
+    conteo_venta = 0
+
     # ==========================================================================
-    # SIMULACIÓN FIEL CON VELAS Y BOLLINGER MOCK
+    # MODIFICACIÓN: SIMULACIÓN FIEL CON VELAS Y REPORTE COMPLETO AL FINAL
     # ==========================================================================
     if cfg['modo_pruebas']:
         print(f"🧪 [MODO PRUEBA MULTI-ACTIVO] Generando simulaciones fieles con velas para: {cfg['assets']}\n")
@@ -156,91 +170,129 @@ def ejecutar_escanner(cfg):
             
             ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_simulado, sl_simulado, tp_simulado)
             
-            msg_test = (f"🧪 **ALERTA SIMULADA (MODO DE PRUEBA - VELAS)**\n\n"
-                        f"🟢 **ENTRADA LONG GATILLADA ({ticker})**\n"
+            msg_test = (f"🧪 **ALERTA SIMULADA ({ticker})**\n\n"
+                        f"🟢 **ENTRADA LONG GATILLADA**\n"
                         f"📅 Fecha: {cfg['dend']} (Hoy)\n"
                         f"💰 Precio Entrada: {precio_simulado}\n"
                         f"🛑 Stop Loss (1.5x ATR): {sl_simulado}\n"
-                        f"🎯 Take Profit (2.5x ATR): {tp_simulado}\n\n"
-                        f"_*Gráfico limpio: Leyendas reubicadas en la base del reporte._")
+                        f"🎯 Take Profit (2.5x ATR): {tp_simulado}")
             
             despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], msg_test, ruta)
+            conteo_compra += 1  # Forzamos conteo de test
             time.sleep(0.5)
+            
+        # Reporte obligatorio final para Modo Pruebas
+        total_test = conteo_compra + conteo_venta
+        msg_resumen_test = (f"🧪 **Ejecución correcta del workflow (MODO PRUEBA)**\n"
+                            f"📅 Fecha: {fecha_operacion}\n"
+                            f"📊 Total señales: {total_test}\n"
+                            f"🟩 De compra: {conteo_compra}\n"
+                            f"🟥 De venta: {conteo_venta}")
+        despachar_telegram_texto(cfg['telegram_token'], cfg['telegram_chat_id'], msg_resumen_test)
         return
 
     # ==========================================================================
-    # EJECUCIÓN REAL EN MERCADO
+    # EJECUCIÓN REAL EN MERCADO PROTEGIDA CON CONTROL TOTAL DE FIN DE RUN
     # ==========================================================================
-    for ticker in cfg['assets']:
-        try:
-            dias_atras = int((cfg['ema_s'] + cfg['vol_pr'] + 15) * 7 / 5)
-            dini = (datetime.strptime(cfg['dend'], "%Y-%m-%d") - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
-            df = yf.download(ticker, start=dini, end=cfg['dend'], auto_adjust=True, progress=False)
-            
-            if df.empty: continue
-            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-            
-            df.rename(columns={'Open':'askopen', 'High':'askhigh', 'Low':'asklow', 'Close':'askclose'}, inplace=True)
-            df.reset_index(inplace=True)
-
-            df['ema20'] = EMAIndicator(df['askclose'].squeeze(), cfg['ema_f']).ema_indicator()
-            df['ema50'] = EMAIndicator(df['askclose'].squeeze(), cfg['ema_s']).ema_indicator()
-            df['rsi'] = RSIIndicator(df['askclose'].squeeze(), cfg['rsi_pr']).rsi()
-            df['atr'] = AverageTrueRange(df['askhigh'].squeeze(), df['asklow'].squeeze(), df['askclose'].squeeze(), cfg['atr_pr']).average_true_range()
-            df['vol_sma'] = df['Volume'].rolling(cfg['vol_pr']).mean()
-
-            bb_indicator = BollingerBands(df['askclose'].squeeze(), window=20, window_dev=2)
-            df['bb_hband'] = bb_indicator.bollinger_hband()
-            df['bb_lband'] = bb_indicator.bollinger_lband()
-
-            df['cond_trend'] = (df['ema20'] > df['ema50']) & (df['askclose'] > df['ema20'])
-            df['cond_rsi_buy'] = (df['rsi'] >= cfg['rsi_buy']) & (df['rsi'].shift(1) < cfg['rsi_buy'])
-            df['cond_vol'] = df['Volume'] > df['vol_sma']
-            df['signal_long'] = df['cond_trend'] & df['cond_rsi_buy'] & df['cond_vol']
-            df['exit_indicators'] = (df['rsi'] < cfg['rsi_sell']) | (df['askclose'] < df['ema20'])
-
-            last_index = df.index[-1]
-            posicion_activa, entry_idx = False, None
-
-            for i in range(max(0, last_index - 30), last_index + 1):
-                if df['signal_long'].iloc[i]: posicion_activa, entry_idx = True, i
-                elif posicion_activa and df['exit_indicators'].iloc[i]: posicion_activa, entry_idx = False, None
-
-            precio_cierre = round(df['askclose'].iloc[last_index], 4)
-            fecha_str = pd.to_datetime(df['Date'].iloc[last_index]).strftime('%Y/%m/%d')
-            df['Alerta'] = ' Neutral'
-
-            if df['signal_long'].iloc[last_index]:
-                df.loc[last_index, 'Alerta'] = '🟢 COMPRA'
-                sl = round(precio_cierre - (cfg['sl_mult'] * df['atr'].iloc[last_index]), 4)
-                tp = round(precio_cierre + (cfg['tp_mult'] * df['atr'].iloc[last_index]), 4)
-                ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_cierre, sl, tp)
-                msg = f"🟢 **COMPRA ({ticker})**\n📅 {fecha_str}\n💰 Entrada: {precio_cierre}\n🛑 SL: {sl}\n🎯 TP: {tp}"
-                despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], msg, ruta)
+    try:
+        print(f"🔍 Iniciando escaneo de mercado real para {len(cfg['assets'])} activos...\n")
+        
+        for ticker in cfg['assets']:
+            try:
+                dias_atras = int((cfg['ema_s'] + cfg['vol_pr'] + 15) * 7 / 5)
+                dini = (datetime.strptime(cfg['dend'], "%Y-%m-%d") - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
+                df = yf.download(ticker, start=dini, end=cfg['dend'], auto_adjust=True, progress=False)
                 
-            elif posicion_activa and entry_idx is not None:
-                p_entry = df['askclose'].iloc[entry_idx]
-                atr_e = df['atr'].iloc[entry_idx]
-                sl, tp = p_entry - (cfg['sl_mult'] * atr_e), p_entry + (cfg['tp_mult'] * atr_e)
+                if df.empty: continue
+                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                
+                df.rename(columns={'Open':'askopen', 'High':'askhigh', 'Low':'asklow', 'Close':'askclose'}, inplace=True)
+                df.reset_index(inplace=True)
 
-                if precio_cierre <= sl:
-                    df.loc[last_index, 'Alerta'] = '🔴 HIT SL'
-                    ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, p_entry, sl, tp)
-                    despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], f"🔴 **HIT SL ({ticker})**\n📉 Salida: {precio_cierre}", ruta)
-                elif precio_cierre >= tp:
-                    df.loc[last_index, 'Alerta'] = '🟢 HIT TP'
-                    ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, p_entry, sl, tp)
-                    despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], f"🟢 **HIT TP ({ticker})**\n📈 Salida: {precio_cierre}", ruta)
-                elif df['exit_indicators'].iloc[last_index]:
-                    df.loc[last_index, 'Alerta'] = '⚠️ EXIT TEC'
-                    ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, p_entry, sl, tp)
-                    despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], f"⚠️ **EXIT TÉCNICO ({ticker})**\n📉 Salida: {precio_cierre}", ruta)
-            
-            print(f"📊 Estado {ticker} -> Precio: {precio_cierre:.2f} | Alerta: {df['Alerta'].iloc[last_index]}")
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"🚨 Error en {ticker}: {e}")
-            continue
+                # Indicadores Técnicos
+                df['ema20'] = EMAIndicator(df['askclose'].squeeze(), cfg['ema_f']).ema_indicator()
+                df['ema50'] = EMAIndicator(df['askclose'].squeeze(), cfg['ema_s']).ema_indicator()
+                df['rsi'] = RSIIndicator(df['askclose'].squeeze(), cfg['rsi_pr']).rsi()
+                df['atr'] = AverageTrueRange(df['askhigh'].squeeze(), df['asklow'].squeeze(), df['askclose'].squeeze(), cfg['atr_pr']).average_true_range()
+                df['vol_sma'] = df['Volume'].rolling(cfg['vol_pr']).mean()
+
+                bb_indicator = BollingerBands(df['askclose'].squeeze(), window=20, window_dev=2)
+                df['bb_hband'] = bb_indicator.bollinger_hband()
+                df['bb_lband'] = bb_indicator.bollinger_lband()
+
+                # Condiciones
+                df['cond_trend'] = (df['ema20'] > df['ema50']) & (df['askclose'] > df['ema20'])
+                df['cond_rsi_buy'] = (df['rsi'] >= cfg['rsi_buy']) & (df['rsi'].shift(1) < cfg['rsi_buy'])
+                df['cond_vol'] = df['Volume'] > df['vol_sma']
+                df['signal_long'] = df['cond_trend'] & df['cond_rsi_buy'] & df['cond_vol']
+                df['exit_indicators'] = (df['rsi'] < cfg['rsi_sell']) | (df['askclose'] < df['ema20'])
+
+                last_index = df.index[-1]
+                posicion_activa, entry_idx = False, None
+
+                for i in range(max(0, last_index - 30), last_index + 1):
+                    if df['signal_long'].iloc[i]: posicion_activa, entry_idx = True, i
+                    elif posicion_activa and df['exit_indicators'].iloc[i]: posicion_activa, entry_idx = False, None
+
+                precio_cierre = round(df['askclose'].iloc[last_index], 4)
+                fecha_str = pd.to_datetime(df['Date'].iloc[last_index]).strftime('%Y/%m/%d')
+                df['Alerta'] = ' Neutral'
+
+                # Despacho de Compra (LONG)
+                if df['signal_long'].iloc[last_index]:
+                    df.loc[last_index, 'Alerta'] = '🟢 COMPRA'
+                    conteo_compra += 1
+                    sl = round(precio_cierre - (cfg['sl_mult'] * df['atr'].iloc[last_index]), 4)
+                    tp = round(precio_cierre + (cfg['tp_mult'] * df['atr'].iloc[last_index]), 4)
+                    ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, precio_cierre, sl, tp)
+                    msg = f"🟢 **COMPRA ({ticker})**\n📅 {fecha_str}\n💰 Entrada: {precio_cierre}\n🛑 SL: {sl}\n🎯 TP: {tp}"
+                    despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], msg, ruta)
+                    
+                # Despacho de Ventas/Salidas Activas
+                elif posicion_activa and entry_idx is not None:
+                    p_entry = df['askclose'].iloc[entry_idx]
+                    atr_e = df['atr'].iloc[entry_idx]
+                    sl, tp = p_entry - (cfg['sl_mult'] * atr_e), p_entry + (cfg['tp_mult'] * atr_e)
+
+                    if precio_cierre <= sl:
+                        df.loc[last_index, 'Alerta'] = '🔴 HIT SL'
+                        conteo_venta += 1
+                        ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, p_entry, sl, tp)
+                        despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], f"🔴 **HIT SL ({ticker})**\n📉 Salida: {precio_cierre}", ruta)
+                    elif precio_cierre >= tp:
+                        df.loc[last_index, 'Alerta'] = '🟢 HIT TP'
+                        conteo_venta += 1
+                        ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, p_entry, sl, tp)
+                        despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], f"🟢 **HIT TP ({ticker})**\n📈 Salida: {precio_cierre}", ruta)
+                    elif df['exit_indicators'].iloc[last_index]:
+                        df.loc[last_index, 'Alerta'] = '⚠️ EXIT TEC'
+                        conteo_venta += 1
+                        ruta = generar_y_guardar_grafico(df, cfg, ticker, last_index, p_entry, sl, tp)
+                        despachar_telegram_con_foto(cfg['telegram_token'], cfg['telegram_chat_id'], f"⚠️ **EXIT TÉCNICO ({ticker})**\n📉 Salida: {precio_cierre}", ruta)
+                
+                print(f"📊 Estado {ticker} -> Precio: {precio_cierre:.2f} | Alerta: {df['Alerta'].iloc[last_index]}")
+                time.sleep(0.5)
+            except Exception as e_asset:
+                print(f"🚨 Error individual saltado para {ticker}: {e_asset}")
+                continue
+
+        # --- NOTIFICACIÓN EXCELENTE: FIN DE WORKFLOW EXITOSO ---
+        total_señales = conteo_compra + conteo_venta
+        msg_exito = (f"✅ **Ejecución correcta del workflow**\n"
+                     f"📅 Fecha: {fecha_operacion}\n"
+                     f"📊 Total señales: {total_señales}\n"
+                     f"🟩 De compra: {conteo_compra}\n"
+                     f"🟥 De venta: {conteo_venta}")
+        print(f"\n{msg_exito}")
+        despachar_telegram_texto(cfg['telegram_token'], cfg['telegram_chat_id'], msg_exito)
+
+    except Exception as e_critico:
+        # --- NOTIFICACIÓN EN CASO DE COLAPSO GENERAL DEL SISTEMA ---
+        msg_fallo = (f"🚨 **Error en la ejecución del workflow**\n"
+                     f"📅 Fecha: {fecha_operacion}\n"
+                     f"❌ Detalle técnico: `{str(e_critico)}`")
+        print(f"\n{msg_fallo}")
+        despachar_telegram_texto(cfg['telegram_token'], cfg['telegram_chat_id'], msg_fallo)
 
 if __name__ == "__main__":
     ejecutar_escanner(CONFIG)
